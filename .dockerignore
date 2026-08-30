@@ -1,0 +1,22 @@
+.git
+.github
+docs
+多游戏后台MVP数据同步系统-推广文章.md
+.env
+.env.*
+!.env.example
+.data
+node_modules
+dist
+coverage
+*.log
+.DS_Store
+
+# Never send local credentials to the Docker build context.
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*

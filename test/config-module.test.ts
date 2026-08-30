@@ -166,3 +166,78 @@ test('删除配置与审计记录在同一事务完成', async () => {
     await database.close();
   }
 });
+
+test('配置草稿可以定时发布并保持线上版本单调递增', async () => {
+  const database = await createTestDatabase();
+  try {
+    const admin = (await database.query<{ id: string }>(
+      `INSERT INTO admins(username,password_hash) VALUES('scheduler','unused') RETURNING id`,
+    )).rows[0]!;
+    const game = (await database.query<{ id: string }>(
+      `INSERT INTO games(game_key,name,api_key_hash) VALUES('schedule_game','Game',repeat('8',64)) RETURNING id`,
+    )).rows[0]!;
+    const configs = createConfigModule(database);
+    const config = await configs.create({
+      gameId: game.id,
+      configKey: 'global',
+      environment: 'production',
+      value: { version: 1 },
+      adminId: admin.id,
+    });
+    const draft = await configs.createDraft({ configId: config.id, value: { version: 2 }, adminId: admin.id });
+    const publishAt = new Date(Date.now() + 60_000);
+    const scheduled = await configs.scheduleDraft({
+      configId: config.id,
+      revisionId: draft.id,
+      publishAt,
+      adminId: admin.id,
+    });
+    assert.equal(new Date(scheduled.scheduled_at!).toISOString(), publishAt.toISOString());
+
+    assert.deepEqual(await configs.publishScheduled(new Date(publishAt.getTime() - 1)), { published: 0 });
+    assert.deepEqual(await configs.publishScheduled(new Date(publishAt.getTime() + 1)), { published: 1 });
+    const current = (await database.query<{ version: number; value: unknown }>(
+      'SELECT version,value FROM game_configs WHERE id=$1', [config.id],
+    )).rows[0]!;
+    assert.equal(current.version, 2);
+    assert.deepEqual(current.value, { version: 2 });
+  } finally {
+    await database.close();
+  }
+});
+
+test('多个配置草稿在同一事务中批量发布', async () => {
+  const database = await createTestDatabase();
+  try {
+    const admin = (await database.query<{ id: string }>(
+      `INSERT INTO admins(username,password_hash) VALUES('batch-publisher','unused') RETURNING id`,
+    )).rows[0]!;
+    const game = (await database.query<{ id: string }>(
+      `INSERT INTO games(game_key,name,api_key_hash) VALUES('batch_publish','Game',repeat('9',64)) RETURNING id`,
+    )).rows[0]!;
+    const configs = createConfigModule(database);
+    const first = await configs.create({ gameId: game.id, configKey: 'first', environment: 'production', value: { n: 1 }, adminId: admin.id });
+    const second = await configs.create({ gameId: game.id, configKey: 'second', environment: 'production', value: { n: 1 }, adminId: admin.id });
+    const firstDraft = await configs.createDraft({ configId: first.id, value: { n: 2 }, adminId: admin.id });
+    const secondDraft = await configs.createDraft({ configId: second.id, value: { n: 2 }, adminId: admin.id });
+
+    const result = await configs.publishBatch({
+      gameId: game.id,
+      items: [
+        { configId: first.id, revisionId: firstDraft.id },
+        { configId: second.id, revisionId: secondDraft.id },
+      ],
+      adminId: admin.id,
+    });
+    assert.equal(result.published.length, 2);
+    const current = (await database.query<{ config_key: string; version: number; value: unknown }>(
+      `SELECT config_key,version,value FROM game_configs WHERE game_id=$1 ORDER BY config_key`, [game.id],
+    )).rows;
+    assert.deepEqual(current, [
+      { config_key: 'first', version: 2, value: { n: 2 } },
+      { config_key: 'second', version: 2, value: { n: 2 } },
+    ]);
+  } finally {
+    await database.close();
+  }
+});

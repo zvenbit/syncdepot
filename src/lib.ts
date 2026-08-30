@@ -4,6 +4,8 @@ export type TokenPayload = {
   sub: string;
   username?: string;
   role?: 'admin' | 'viewer';
+  must_change_password?: boolean;
+  ver?: number;
   exp?: number;
   [key: string]: unknown;
 };

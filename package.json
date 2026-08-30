@@ -1,6 +1,6 @@
 {
   "name": "game-data-center",
-  "version": "2.2.0",
+  "version": "2.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,7 +12,10 @@
     "create-admin": "node --import tsx scripts/create-admin.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
     "smoke": "node --import tsx scripts/smoke.ts",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "format:check": "node --import tsx scripts/check-format.ts",
+    "lint": "npm run typecheck && node --check public/admin-theme.js && node --check public/admin-core.js && node --check public/admin-analytics.js && node --check public/admin-management.js",
+    "check": "npm run format:check && npm run lint && npm test && npm run build"
   },
   "engines": {
     "node": ">=20.12"

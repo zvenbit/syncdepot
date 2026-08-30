@@ -4,9 +4,7 @@ services:
     environment:
       POSTGRES_DB: game_center
       POSTGRES_USER: game_admin
-      POSTGRES_PASSWORD: change_me
-    ports:
-      - "5432:5432"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?请设置 POSTGRES_PASSWORD}"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -20,10 +18,12 @@ services:
     environment:
       PORT: 8080
       HOST: 0.0.0.0
-      DATABASE_URL: postgres://game_admin:change_me@postgres:5432/game_center
-      JWT_SECRET: replace-this-in-production-with-a-long-random-value
-      ADMIN_USERNAME: admin
-      ADMIN_PASSWORD: change-this-before-production
+      DATABASE_URL: "${DATABASE_URL:?请设置 DATABASE_URL，容器内数据库主机名使用 postgres}"
+      JWT_SECRET: "${JWT_SECRET:?请设置至少 32 位的 JWT_SECRET}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?请设置初始管理员临时密码}"
+      CREDENTIAL_ENCRYPTION_KEY: "${CREDENTIAL_ENCRYPTION_KEY:-}"
+      CLIENT_CORS_ORIGINS: "${CLIENT_CORS_ORIGINS:-http://localhost:7456,http://127.0.0.1:7456}"
     ports:
       - "8080:8080"
     depends_on:

@@ -2,11 +2,18 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 import { query } from './db.js';
 import { sha256, verifyToken, type TokenPayload } from './lib.js';
 import { createDatabaseRateLimitStore, createMemoryRateLimitStore, type RateLimitStore } from './rate-limit.js';
+import { GAME_SCOPES } from './constants.js';
 
-export const GAME_SCOPES = ['config:read', 'user:resolve', 'archive:read', 'archive:write', 'analytics:write'] as const;
+export { GAME_SCOPES } from './constants.js';
 export type GameScope = typeof GAME_SCOPES[number];
 export type GameAccess = { id: string; game_key: string; name: string; key_id: string; scopes: string[] };
-export type UserAccess = TokenPayload & { sub: string; game_id: string; kind: 'user' };
+export type UserAccess = TokenPayload & {
+  sub: string;
+  game_id: string;
+  kind: 'user';
+  test_account_id?: string;
+  test_account_version?: number;
+};
 
 export function bearer(request: FastifyRequest): string | undefined {
   return request.headers.authorization?.replace(/^Bearer\s+/i, '');
@@ -38,11 +45,21 @@ export function createUserGuard(jwtSecret: string, databaseQuery: typeof query =
     if (!payload || payload.kind !== 'user' || !payload.game_id) {
       throw Object.assign(new Error('用户登录已失效'), { statusCode: 401 });
     }
-    const active = await databaseQuery(
-      `SELECT 1 FROM game_users u JOIN games g ON g.id=u.game_id
-       WHERE u.id=$1 AND u.game_id=$2 AND g.enabled=true`,
-      [payload.sub, payload.game_id],
-    );
+    const testAccountId = typeof payload.test_account_id === 'string' ? payload.test_account_id : null;
+    const testAccountVersion = Number.isInteger(payload.test_account_version) ? Number(payload.test_account_version) : -1;
+    const active = testAccountId
+      ? await databaseQuery(
+          `SELECT 1 FROM game_users u JOIN games g ON g.id=u.game_id
+           JOIN game_test_accounts a ON a.user_id=u.id AND a.game_id=u.game_id
+           WHERE u.id=$1 AND u.game_id=$2 AND g.enabled=true
+             AND a.id=$3 AND a.enabled=true AND a.token_version=$4`,
+          [payload.sub, payload.game_id, testAccountId, testAccountVersion],
+        )
+      : await databaseQuery(
+          `SELECT 1 FROM game_users u JOIN games g ON g.id=u.game_id
+           WHERE u.id=$1 AND u.game_id=$2 AND g.enabled=true`,
+          [payload.sub, payload.game_id],
+        );
     if (!active.rowCount) throw Object.assign(new Error('用户或游戏已停用'), { statusCode: 401 });
     request.userAccess = payload;
   };

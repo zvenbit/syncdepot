@@ -1,7 +1,20 @@
 node_modules/
 .env
+.env.*
+!.env.example
 *.log
 .DS_Store
 coverage/
 dist/
 .data/
+.github/
+docs/
+
+# Private keys and certificates must never enter version control.
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+id_rsa*
+id_ed25519*

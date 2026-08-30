@@ -5,11 +5,15 @@ type Metric = { gameId: string; route: string; statusCode: number; durationMs: n
 export function createMetricsCollector(options: {
   query: DatabaseClient['query'];
   flushMs?: number;
+  maxQueue?: number;
   autoStart?: boolean;
+  onError?: (error: unknown) => void;
 }) {
   let queue: Metric[] = [];
   let activeFlush: Promise<void> | null = null;
+  let dropped = 0;
   const flushMs = options.flushMs || 1000;
+  const maxQueue = options.maxQueue || 10_000;
 
   async function flushBatch(): Promise<void> {
     if (!queue.length) return;
@@ -35,13 +39,15 @@ export function createMetricsCollector(options: {
         [item.date, item.gameId, item.route, item.requests, item.errors, item.duration],
       )));
     } catch (error) {
-      queue = [...batch, ...queue];
+      const combined = [...batch, ...queue];
+      if (combined.length > maxQueue) dropped += combined.length - maxQueue;
+      queue = combined.slice(-maxQueue);
       throw error;
     }
   }
 
   const timer = options.autoStart === false ? null : setInterval(() => {
-    void flush().catch(() => undefined);
+    void flush().catch(error => options.onError?.(error));
   }, flushMs);
   timer?.unref();
 
@@ -51,8 +57,15 @@ export function createMetricsCollector(options: {
   }
 
   return {
-    record(metric: Metric): void { queue.push(metric); },
+    record(metric: Metric): void {
+      if (queue.length >= maxQueue) {
+        dropped += 1;
+        return;
+      }
+      queue.push(metric);
+    },
     flush,
+    stats(): { queued: number; dropped: number } { return { queued: queue.length, dropped }; },
     async close(): Promise<void> {
       if (timer) clearInterval(timer);
       do { await flush(); } while (queue.length);

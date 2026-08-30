@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createArchiveSyncModule } from '../src/modules/archive.js';
+import { createArchiveSyncModule, decodeArchiveData } from '../src/modules/archive.js';
 import { createTestDatabase } from './support/database.js';
 
 test('相同幂等键的存档重试返回第一次结果而不增加版本', async () => {
@@ -53,6 +53,46 @@ test('恢复历史存档会生成新版本而不改写历史', async () => {
 
     assert.equal(restored.version, 3);
     assert.deepEqual(restored.data, { level: 1 });
+  } finally {
+    await database.close();
+  }
+});
+
+test('压缩存档字符串作为不透明数据原样保存和读取', async () => {
+  const database = await createTestDatabase();
+  try {
+    const game = (await database.query<{ id: string }>(
+      `INSERT INTO games(game_key,name,api_key_hash) VALUES('compressed_archive','Archive',repeat('8',64)) RETURNING id`,
+    )).rows[0]!;
+    const user = (await database.query<{ id: string }>(
+      `INSERT INTO game_users(game_id,external_user_id) VALUES($1,'compressed-player') RETURNING id`, [game.id],
+    )).rows[0]!;
+    const compressedBytes = [120, 156, 99, 96, 100, 98, 6, 0, 0, 18, 255, 7];
+    const compressedString = String.fromCharCode(...compressedBytes);
+    const archives = createArchiveSyncModule(database, { maxBytes: 1024 });
+    const saved = await archives.save({
+      gameId: game.id,
+      userId: user.id,
+      slot: 'main',
+      data: compressedString,
+      idempotencyKey: 'compressed-save',
+      actor: { actorType: 'user', actorId: user.id },
+    });
+    assert.equal(saved.archive.data, compressedString);
+    const replayed = await archives.save({
+      gameId: game.id,
+      userId: user.id,
+      slot: 'main',
+      data: compressedString,
+      idempotencyKey: 'compressed-save',
+      actor: { actorType: 'user', actorId: user.id },
+    });
+    assert.equal(replayed.kind, 'replayed');
+    assert.equal(replayed.archive.data, compressedString);
+    const stored = (await database.query<{ data: unknown }>(
+      'SELECT data FROM user_archives WHERE id=$1', [saved.archive.id],
+    )).rows[0]!;
+    assert.equal(decodeArchiveData(stored.data), compressedString);
   } finally {
     await database.close();
   }

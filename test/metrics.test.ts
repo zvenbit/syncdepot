@@ -22,3 +22,25 @@ test('请求指标先进入内存队列并批量聚合写入数据库', async ()
     await database.close();
   }
 });
+
+test('指标队列达到上限时丢弃新增样本而不是无限占用内存', async () => {
+  const database = await createTestDatabase();
+  try {
+    const game = (await database.query<{ id: string }>(
+      `INSERT INTO games(game_key,name,api_key_hash) VALUES('metrics_limit','Metrics',repeat('7',64)) RETURNING id`,
+    )).rows[0]!;
+    const metrics = createMetricsCollector({ query: database.query, autoStart: false, maxQueue: 2 });
+    metrics.record({ gameId: game.id, route: '/configs', statusCode: 200, durationMs: 10 });
+    metrics.record({ gameId: game.id, route: '/configs', statusCode: 200, durationMs: 20 });
+    metrics.record({ gameId: game.id, route: '/configs', statusCode: 500, durationMs: 30 });
+    assert.deepEqual(metrics.stats(), { queued: 2, dropped: 1 });
+    await metrics.flush();
+    assert.deepEqual(metrics.stats(), { queued: 0, dropped: 1 });
+    const requests = Number((await database.query<{ requests: number }>(
+      `SELECT requests FROM api_metrics_daily WHERE game_id=$1`, [game.id],
+    )).rows[0]!.requests);
+    assert.equal(requests, 2);
+  } finally {
+    await database.close();
+  }
+});
